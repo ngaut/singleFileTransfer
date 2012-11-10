@@ -3,6 +3,7 @@
 
 #include <windows.h>
 
+int Init();
 void ShowMessage(char* str);
 int ReadAt(int fd, void* buf, int len, __int64 offset);
 int WriteAt(int fd, void* buf, int len, __int64 offset);

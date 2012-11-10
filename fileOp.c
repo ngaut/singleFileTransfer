@@ -11,9 +11,33 @@ void ShowMessage(char* str)
 	MessageBoxA(NULL, str, "", MB_OK);
 }
 
+typedef int (__cdecl *fnReadAt)(int, void*, int, __int64);
+typedef int (__cdecl *fnWriteAt)(int, void*, int, __int64 );
+typedef int (__cdecl *fnOpen)(const char*, int);
+typedef int (__cdecl *fnClose)(int);
+
+fnReadAt  readAtFn = NULL;
+fnWriteAt writeAtFn = NULL;
+fnOpen    openFn = NULL;
+fnClose   closeFn = NULL;
+
+int Init(){
+	HINSTANCE hinstLib = LoadLibrary("transfer.dll"); 
+	if (hinstLib == NULL){
+		ShowMessage("load dll failed");
+	}
+
+	readAtFn = (fnReadAt)GetProcAddress(hinstLib, "ReadAt");
+	writeAtFn = (fnWriteAt)GetProcAddress(hinstLib, "WriteAt");
+	openFn = (fnOpen)GetProcAddress(hinstLib, "Open");
+	closeFn = (fnClose)GetProcAddress(hinstLib, "Close");
+
+	return 0;
+}
 
 
 int ReadAt(int fd, void* buf, int len, __int64 offset){
+/*
 	int n = _lseeki64(fd, offset, SEEK_SET);
 	if (n == -1)
 	{
@@ -31,9 +55,12 @@ int ReadAt(int fd, void* buf, int len, __int64 offset){
 	}
 
 	return n;
+	*/
+	return readAtFn(fd, buf, len, offset);
 }
 
 int WriteAt(int fd, void* buf, int len, __int64 offset){
+/*
 	int n = _lseeki64(fd, offset, SEEK_SET);
 	if (n == -1)
 	{
@@ -51,13 +78,21 @@ int WriteAt(int fd, void* buf, int len, __int64 offset){
 	}
 
 	return n;
+	*/
+	return writeAtFn(fd, buf, len, offset);
 }
 
 int Open(const char* fname, int oflag){
+/*
 	return _open(fname, oflag);
+	*/
+	return openFn(fname, oflag);
 }
 
 void Close(int fd){
+/*
 	ShowMessage("close file");
 	_close(fd);
+	*/
+	closeFn(fd);
 }

@@ -72,6 +72,7 @@ func ensureDirectory(fullPath string) (err error) {
 }
 
 func NewFileStore(info *InfoDict, storePath string) (f FileStore, totalSize int64, err error) {
+	C.Init()
 	fs := new(fileStore)
 	numFiles := len(info.Files)
 	if numFiles == 0 {
