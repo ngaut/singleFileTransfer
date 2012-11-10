@@ -57,7 +57,7 @@ func IoRoutine(request <-chan *IoArgs, responce chan<- interface{} ) {
 			if arg.ioMode == MODE_WRITE {
 				mod = "WRITE"
 			}
-			log.Println("\nwarning, disk io too slow, use %v seconds, mod:%v, offset:%v\n", sec,  mod, arg.offset)
+			log.Printf("\nwarning, disk io too slow, use %v seconds, mod:%v, offset:%v\n", sec,  mod, arg.offset)
 		}
 		responce<-arg.context
 	}

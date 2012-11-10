@@ -37,6 +37,7 @@ type Config struct{
 	noCheckSum 					bool
 	doRealReadWrite				bool
 	rechokeTick					int
+	totalTransferSize			int64
 }
 
 // BitTorrent message types. Sources:
@@ -60,6 +61,10 @@ const (
 var cfg Config
 
 func init() {
+	cfg = Config{MAX_NUM_PEERS : 200, TARGET_NUM_PEERS : 30, 
+		 MAX_PEER_REQUESTS : 10,
+		}
+
 	flag.StringVar(&cfg.fileDir, "fileDir", ".", "path to directory where files are stored")
 	// If the port is 0, picks up a random port - but the DHT will keep
 	// running on port 0 because ListenUDP doesn't do that.
@@ -71,10 +76,13 @@ func init() {
 		"testing the DHT mode.")
 	flag.BoolVar(&cfg.noCheckSum, "nochecksum", false, "do not use checksum for fast starting")	
 	rand.Seed(int64(time.Now().Nanosecond()))
-
-	cfg = Config{MAX_NUM_PEERS : 200, TARGET_NUM_PEERS : 30, MAX_DOWNLOADING_CONNECTION : 2,
-		MAX_UPLOADING_CONNECTION : 2, MAX_OUR_REQUESTS : 10, MAX_PEER_REQUESTS : 10, doRealReadWrite:true,
-		rechokeTick:10, STANDARD_BLOCK_LENGTH:32 * 1024 + 32*1024}
+	flag.BoolVar(&cfg.doRealReadWrite, "doRealReadWrite", true, "do not io disk, using memory instead")	
+	flag.IntVar(&cfg.STANDARD_BLOCK_LENGTH, "STANDARD_BLOCK_LENGTH", 32 * 1024 + 32*1024, "stand block length")
+	flag.IntVar(&cfg.MAX_OUR_REQUESTS, "MAX_OUR_REQUESTS", 10, "max out requests")
+	flag.IntVar(&cfg.MAX_UPLOADING_CONNECTION, "MAX_UPLOADING_CONNECTION", 1, "max uploading connection")
+	flag.IntVar(&cfg.MAX_DOWNLOADING_CONNECTION, "MAX_DOWNLOADING_CONNECTION", 1, "max downloading connection")
+	flag.IntVar(&cfg.rechokeTick, "rechokeTick", 10, "rechoke tick seconds")
+	flag.Int64Var(&cfg.totalTransferSize, "totalTransferSize", 1 * 1024 * 1024 * 1024, "total transfer size")
 }
 
 
@@ -214,7 +222,7 @@ func NewTorrentSession(torrent string) (ts *TorrentSession, err error) {
 	t.fastResumeFile = torrent + ".fastResume"
 
 	if cfg.noCheckSum{
-		t.totalSize = 17885068
+		t.totalSize = cfg.totalTransferSize
 		//必须是整数倍
 		t.m.Info.PieceLength = int64(cfg.STANDARD_BLOCK_LENGTH * 50)
 	}
