@@ -7,14 +7,14 @@ import "C"
 import (
 	"errors"
 	"io"
+	"log"
 	"os"
 	"path"
-	"log"
 	"strings"
 	"unsafe"
 )
 
-const O_BINARY = 0x8000 
+const O_BINARY = 0x8000
 
 type FileStore interface {
 	io.ReaderAt
@@ -32,23 +32,22 @@ type fileStore struct {
 	files   []fileEntry // Stored in increasing globalOffset order
 }
 
-
 func (fe *fileEntry) open(name string, length int64) (err error) {
 	fe.length = length
 	_, e := os.Stat(name)
 	if e != nil && os.IsNotExist(e) {
 		_, err = os.Create(name)
- 		if err != nil {
- 			return
+		if err != nil {
+			return
 		}
-	} 
+	}
 
-	 err = os.Truncate(name, length)
- 	if err != nil {
- 		return
- 	}
+	err = os.Truncate(name, length)
+	if err != nil {
+		return
+	}
 
-	fe.fd = int(C.Open(C.CString(name), _Ctype_int(os.O_RDWR | O_BINARY)))
+	fe.fd = int(C.Open(C.CString(name), _Ctype_int(os.O_RDWR|O_BINARY)))
 	log.Println("fd", fe.fd)
 	return nil
 }
@@ -170,11 +169,11 @@ func (f *fileStore) WriteAt(p []byte, off int64) (n int, err error) {
 			fd := entry.fd
 			var nThisTime int
 			/*
-			nThisTime, err = fd.WriteAt(p[0:chunk], itemOffset)
-			n += nThisTime
-			if err != nil {
-				return
-			}
+				nThisTime, err = fd.WriteAt(p[0:chunk], itemOffset)
+				n += nThisTime
+				if err != nil {
+					return
+				}
 			*/
 			nThisTime = int(C.WriteAt(_Ctype_int(fd), unsafe.Pointer(&p[0]), _Ctype_int(chunk), _Ctype_longlong(itemOffset)))
 			if nThisTime < 0 {

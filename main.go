@@ -2,29 +2,26 @@ package main
 
 import (
 	"flag"
+	"io"
 	"log"
 	"os"
-	"io"
 	"runtime"
 )
 
 var torrent string
 
-
-
 func main() {
 	flag.Usage = usage
 	flag.Parse()
 
-	logf, err := os.OpenFile("log.txt", os.O_WRONLY|os.O_CREATE, 0640) 
-    if err != nil { 
-        log.Fatalln(err) 
-    } 
-    log.SetOutput(io.MultiWriter(logf, os.Stdout)) 
-    //log.SetOutput(io.Writer(logf)) 
+	logf, err := os.OpenFile("log.txt", os.O_WRONLY|os.O_CREATE, 0640)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	log.SetOutput(io.MultiWriter(logf, os.Stdout))
+	//log.SetOutput(io.Writer(logf)) 
 
-    runtime.GOMAXPROCS(2) 
-
+	runtime.GOMAXPROCS(2)
 
 	args := flag.Args()
 	narg := flag.NArg()

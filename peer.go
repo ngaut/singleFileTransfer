@@ -6,13 +6,12 @@ import (
 	"time"
 )
 
-
 type peerMessage struct {
 	peer    *peerState
 	message []byte // nil means an error occurred
 }
 
-type DownloadUpload struct{
+type DownloadUpload struct {
 	Uploaded   int64
 	Downloaded int64
 }
@@ -32,10 +31,10 @@ type peerState struct {
 	peer_interested bool // peer is interested in this client
 	peer_requests   map[uint64]bool
 	our_requests    map[uint64]time.Time // What we requested, when we requested it
-	upload 			int
-	download		int
-	lastSchedule	time.Time
-	isSeed			bool
+	upload          int
+	download        int
+	lastSchedule    time.Time
+	isSeed          bool
 }
 
 func queueingWriter(in, out chan []byte) {
@@ -79,7 +78,7 @@ func NewPeerState(conn net.Conn) *peerState {
 		am_choking: true, peer_choking: true,
 		peer_requests: make(map[uint64]bool, cfg.MAX_PEER_REQUESTS),
 		our_requests:  make(map[uint64]time.Time, cfg.MAX_OUR_REQUESTS),
-		isSeed:false}
+		isSeed:        false}
 }
 
 func (p *peerState) Close() {
@@ -222,9 +221,16 @@ func (p *peerState) peerReader(msgChan chan peerMessage) {
 	if err != nil {
 		goto exit
 	}
-	if string(header[1:20]) != "BitTorrent protocol" {
-		goto exit
+	if cfg.changeProtocolName {
+		if string(header[1:20]) != "BctTollent protocol" {
+			goto exit
+		}
+	} else {
+		if string(header[1:20]) != "BitTorrent protocol" {
+			goto exit
+		}
 	}
+
 	// Read rest of header
 	_, err = p.conn.Read(header[20:])
 	if err != nil {
