@@ -41,12 +41,12 @@ func (fe *fileEntry) open(name string, length int64) (err error) {
 			return
 		}
 	}
-
-	err = os.Truncate(name, length)
-	if err != nil {
-		return
-	}
-
+	/*
+		err = os.Truncate(name, length)
+		if err != nil {
+			return
+		}
+	*/
 	fe.fd = int(C.Open(C.CString(name), _Ctype_int(os.O_RDWR|O_BINARY)))
 	log.Println("fd", fe.fd)
 	return nil
@@ -117,11 +117,12 @@ func (f *fileStore) find(offset int64) int {
 }
 
 func (f *fileStore) ReadAt(p []byte, off int64) (n int, err error) {
+	//which file?
 	index := f.find(off)
-	for len(p) > 0 && index < len(f.offsets) {
+	if len(p) > 0 && index < len(f.offsets) {
 		chunk := int64(len(p))
 		entry := &f.files[index]
-		itemOffset := off - f.offsets[index]
+		itemOffset := off - f.offsets[index] //offset of this file
 		if itemOffset < entry.length {
 			space := entry.length - itemOffset
 			if space < chunk {
@@ -138,10 +139,12 @@ func (f *fileStore) ReadAt(p []byte, off int64) (n int, err error) {
 
 			nThisTime = int(C.ReadAt(_Ctype_int(fd), unsafe.Pointer(&p[0]), _Ctype_int(chunk), _Ctype_longlong(itemOffset)))
 			if nThisTime <= 0 {
-				//log.Println("read file failed, offset", itemOffset, "fd", fd)
-				//panic("")
+				log.Println("read file failed, offset", itemOffset, "fd", fd)
+				panic("")
 				return
 			}
+
+			n = n + nThisTime
 			p = p[nThisTime:]
 			off += int64(nThisTime)
 		}
@@ -157,7 +160,7 @@ func (f *fileStore) ReadAt(p []byte, off int64) (n int, err error) {
 
 func (f *fileStore) WriteAt(p []byte, off int64) (n int, err error) {
 	index := f.find(off)
-	for len(p) > 0 && index < len(f.offsets) {
+	if len(p) > 0 && index < len(f.offsets) {
 		chunk := int64(len(p))
 		entry := &f.files[index]
 		itemOffset := off - f.offsets[index]
@@ -177,11 +180,11 @@ func (f *fileStore) WriteAt(p []byte, off int64) (n int, err error) {
 			*/
 			nThisTime = int(C.WriteAt(_Ctype_int(fd), unsafe.Pointer(&p[0]), _Ctype_int(chunk), _Ctype_longlong(itemOffset)))
 			if nThisTime < 0 {
-				//log.Println("Write file failed")
+				log.Println("Write file failed", itemOffset, "fd", fd)
 				panic("")
 				return
 			}
-
+			n = n + nThisTime
 			p = p[nThisTime:]
 			off += int64(nThisTime)
 		}

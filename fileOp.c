@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <fcntl.h>
 
+#define USING_DYNAMIC_PLUGIN 1
+
 
 #define _FILE_OFFSET_BITS 64
 
@@ -22,22 +24,30 @@ fnOpen    openFn = NULL;
 fnClose   closeFn = NULL;
 
 int Init(){
-	HINSTANCE hinstLib = LoadLibrary("transfer.dll"); 
+#if USING_DYNAMIC_PLUGIN	
+	HINSTANCE hinstLib = LoadLibrary("p2pdll.dll"); 
 	if (hinstLib == NULL){
 		ShowMessage("load dll failed");
+		return -1;
 	}
 
 	readAtFn = (fnReadAt)GetProcAddress(hinstLib, "ReadAt");
 	writeAtFn = (fnWriteAt)GetProcAddress(hinstLib, "WriteAt");
 	openFn = (fnOpen)GetProcAddress(hinstLib, "Open");
 	closeFn = (fnClose)GetProcAddress(hinstLib, "Close");
-
+	if (readAtFn == NULL || writeAtFn == NULL || openFn == NULL || closeFn == NULL){
+		ShowMessage("some of export function not found");
+		return -1;
+	}
+#endif
 	return 0;
 }
 
 
 int ReadAt(int fd, void* buf, int len, __int64 offset){
-/*
+#if USING_DYNAMIC_PLUGIN	
+	return readAtFn(fd, buf, len, offset);
+#else
 	int n = _lseeki64(fd, offset, SEEK_SET);
 	if (n == -1)
 	{
@@ -54,13 +64,14 @@ int ReadAt(int fd, void* buf, int len, __int64 offset){
 		ShowMessage("oops");
 	}
 
-	return n;
-	*/
-	return readAtFn(fd, buf, len, offset);
+	return n;	
+#endif	
 }
 
 int WriteAt(int fd, void* buf, int len, __int64 offset){
-/*
+#if USING_DYNAMIC_PLUGIN	
+	return writeAtFn(fd, buf, len, offset);
+#else
 	int n = _lseeki64(fd, offset, SEEK_SET);
 	if (n == -1)
 	{
@@ -75,24 +86,25 @@ int WriteAt(int fd, void* buf, int len, __int64 offset){
 	{
 		printf("errno %d\n", errno);
 		ShowMessage("oops");
-	}
+	}	
 
 	return n;
-	*/
-	return writeAtFn(fd, buf, len, offset);
+#endif	
 }
 
 int Open(const char* fname, int oflag){
-/*
-	return _open(fname, oflag);
-	*/
+#if USING_DYNAMIC_PLUGIN	
 	return openFn(fname, oflag);
+#else
+	return _open(fname, oflag);
+#endif	
 }
 
 void Close(int fd){
-/*
 	ShowMessage("close file");
-	_close(fd);
-	*/
+#if USING_DYNAMIC_PLUGIN		
 	closeFn(fd);
+#else
+	_close(fd);
+#endif	
 }

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/ghais/gocache"
 	"github.com/nictuku/dht"
 	"github.com/nictuku/nettools"
 	"io"
@@ -56,6 +55,9 @@ const (
 	PORT // Not implemented. For DHT support.
 )
 
+const STORAGE_BLOCK_SIZE = 32 * 1024
+const BLOCK_META_SIZE = 24
+
 // Should be overriden by flag. Not thread safe.
 
 var cfg Config
@@ -77,7 +79,7 @@ func init() {
 	flag.BoolVar(&cfg.noCheckSum, "nochecksum", false, "do not use checksum for fast starting")
 	rand.Seed(int64(time.Now().Nanosecond()))
 	flag.BoolVar(&cfg.doRealReadWrite, "doRealReadWrite", true, "do not io disk, using memory instead")
-	flag.IntVar(&cfg.STANDARD_BLOCK_LENGTH, "STANDARD_BLOCK_LENGTH", 32*1024+8, "stand block length")
+	flag.IntVar(&cfg.STANDARD_BLOCK_LENGTH, "STANDARD_BLOCK_LENGTH", STORAGE_BLOCK_SIZE+BLOCK_META_SIZE, "stand block length")
 	flag.IntVar(&cfg.MAX_OUR_REQUESTS, "MAX_OUR_REQUESTS", 5, "max our requests")
 	flag.IntVar(&cfg.MAX_UPLOADING_CONNECTION, "MAX_UPLOADING_CONNECTION", 1, "max uploading connection")
 	flag.IntVar(&cfg.MAX_DOWNLOADING_CONNECTION, "MAX_DOWNLOADING_CONNECTION", 1, "max downloading connection")
@@ -173,7 +175,6 @@ type TorrentSession struct {
 	history         map[string]*DownloadUpload
 	ioRequestChan   chan *IoArgs
 	ioResponceChan  chan interface{}
-	cache           *cache.LRUCache
 	fastResumeFile  string
 }
 
@@ -192,8 +193,6 @@ func NewTorrentSession(torrent string) (ts *TorrentSession, err error) {
 		ioRequestChan:   make(chan *IoArgs, 100),
 		ioResponceChan:  make(chan interface{}, 100),
 	}
-
-	t.cache = cache.NewLRUCache(10 * 1024 * 1024)
 
 	t.m, err = getMetaInfo(torrent)
 	if err != nil {
@@ -223,7 +222,8 @@ func NewTorrentSession(torrent string) (ts *TorrentSession, err error) {
 	t.fastResumeFile = torrent + ".fastResume"
 
 	if cfg.noCheckSum {
-		t.totalSize = cfg.totalTransferSize
+		blocks := (cfg.totalTransferSize + STORAGE_BLOCK_SIZE - 1) / STORAGE_BLOCK_SIZE
+		t.totalSize = blocks * (STORAGE_BLOCK_SIZE + BLOCK_META_SIZE)
 		//必须是整数倍
 		t.m.Info.PieceLength = int64(cfg.STANDARD_BLOCK_LENGTH * 50)
 	}
@@ -663,15 +663,12 @@ func (t *TorrentSession) DoTorrent() (err error) {
 			if _, ok := ioResult.(*WriteContext); ok {
 
 			} else if context, ok := ioResult.(*ReadContext); ok {
-				value := &CacheValue{}
-				value.buf = append(value.buf, context.msgBuf[9:]...)
-
-				t.cache.Set(context.globalOffset, value)
 				//make sure the peer is still alive
 				for _, v := range t.peers {
 					if v == context.peer {
-						context.peer.sendMessage(context.msgBuf)
-						t.si.Uploaded += int64(context.length)
+						buf := context.msgBuf[0 : len(context.msgBuf)-context.length+context.realLength]
+						context.peer.sendMessage(buf)
+						t.si.Uploaded += int64(context.realLength)
 					}
 				}
 			} else {
@@ -1122,14 +1119,9 @@ func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 			}
 			t.history[p.address].Downloaded += int64(length)
 
-			context := &WriteContext{peer: p, whichPiece: index, begin: begin, length: uint32(length)}
+			context := &WriteContext{peer: p, whichPiece: index, begin: begin, length: length}
 			args := &IoArgs{f: t.fileStore, ioMode: MODE_WRITE, buf: message[9:], offset: globalOffset, context: context}
 			//todo: check if we still interested in other peers
-
-			value := &CacheValue{}
-			value.buf = append(value.buf, message[9:]...)
-
-			t.cache.Set(globalOffset, value)
 
 			//asyn write
 			t.ioRequestChan <- args
@@ -1186,22 +1178,13 @@ func (t *TorrentSession) sendRequest(peer *peerState, index, begin, length uint3
 		uint32ToBytes(buf[5:9], begin)
 
 		globalOffset := int64(index)*t.m.Info.PieceLength + int64(begin)
-		if block, ok := t.cache.Get(globalOffset); ok {
-			//log.Println("cache hint")
-			if k, ok := block.(*CacheValue); ok {
-				copy(buf[9:], k.buf)
-				peer.sendMessage(buf)
-				t.si.Uploaded += int64(length)
-			} else {
-				panic("invalid cache")
-			}
-		} else {
-			//log.Println("cache miss ", globalOffset)
-			//asyn read
-			rc := &ReadContext{peer: peer, msgBuf: buf, globalOffset: globalOffset, length: length}
-			args := &IoArgs{f: t.fileStore, ioMode: MODE_READ, buf: buf[9:], offset: globalOffset, context: rc}
-			t.ioRequestChan <- args
-		}
+
+		//log.Println("cache miss ", globalOffset)
+		//asyn read
+		rc := &ReadContext{peer: peer, msgBuf: buf, globalOffset: globalOffset, length: int(length)}
+		args := &IoArgs{f: t.fileStore, ioMode: MODE_READ, buf: buf[9:], offset: globalOffset, context: rc}
+		t.ioRequestChan <- args
+
 	}
 	return
 }
