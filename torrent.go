@@ -292,6 +292,10 @@ func (t *TorrentSession) AddPeer(conn net.Conn) {
 	copy(header[28:48], string2Bytes(t.m.InfoHash))
 	copy(header[48:68], string2Bytes(t.si.PeerId))
 
+	if _, ok := t.history[ps.address]; !ok {
+		t.history[ps.address] = &DownloadUpload{0, 0, time.Now()}
+	}
+
 	t.peers[ip] = ps
 	go ps.peerWriter(t.peerMessageChan, header[0:])
 	go ps.peerReader(t.peerMessageChan)
@@ -436,6 +440,7 @@ func (t *TorrentSession) DoTorrent() (err error) {
 	// Maybe be exponential backoff here?
 	retrackerChan := time.Tick(10 * time.Second)
 	keepAliveChan := time.Tick(60 * time.Second)
+	deadPeerCheckChan := time.Tick(60 * time.Second)
 	t.trackerInfoChan = make(chan *TrackerResponse)
 
 	conChan := make(chan net.Conn)
@@ -568,13 +573,6 @@ func (t *TorrentSession) DoTorrent() (err error) {
 		case _ = <-keepAliveChan:
 			now := time.Now()
 			for _, peer := range t.peers {
-				//kill dead connection
-				if time.Now().Sub(t.history[peer.address].lastActive) > 1*time.Minute {
-					log.Println("Closing peer", peer.address, "because kill dead connection")
-					t.ClosePeer(peer)
-					continue
-				}
-
 				if peer.lastReadTime.Second() != 0 && now.Sub(peer.lastReadTime) > 1*time.Minute {
 					log.Println("Closing peer", peer.address, "because timed out.")
 					t.ClosePeer(peer)
@@ -592,7 +590,22 @@ func (t *TorrentSession) DoTorrent() (err error) {
 				}
 				peer.keepAlive(now)
 			}
+
+		case _ = <-deadPeerCheckChan:
+			for _, peer := range t.peers {
+				//kill dead connection
+				if _, exist := t.history[peer.address]; !exist {
+					continue
+				}
+
+				if time.Now().Sub(t.history[peer.address].lastActive) > 1*time.Minute {
+					log.Println("Closing peer", peer.address, "because kill dead connection")
+					t.ClosePeer(peer)
+					break
+				}
+			}
 		}
+
 	}
 	return
 }
@@ -957,9 +970,6 @@ func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 				log.Println(int(length), "but stand block length", cfg.STANDARD_BLOCK_LENGTH)
 			}
 			p.upload += int(length) / 1024 //k
-			if _, ok := t.history[p.address]; !ok {
-				t.history[p.address] = &DownloadUpload{0, 0, time.Now()}
-			}
 
 			t.history[p.address].Uploaded += int64(length)
 			t.history[p.address].lastActive = time.Now()
@@ -994,9 +1004,7 @@ func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 			globalOffset := int64(index)*t.m.Info.PieceLength + int64(begin)
 
 			p.download += int(length) / 1024 // k
-			if _, ok := t.history[p.address]; !ok {
-				t.history[p.address] = &DownloadUpload{0, 0, time.Now()}
-			}
+
 			t.history[p.address].Downloaded += int64(length)
 			t.history[p.address].lastActive = time.Now()
 
