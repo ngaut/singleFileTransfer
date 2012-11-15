@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"github.com/nictuku/dht"
 	"github.com/nictuku/nettools"
@@ -18,105 +17,6 @@ import (
 	"strings"
 	"time"
 )
-
-type Config struct {
-	STANDARD_BLOCK_LENGTH      int
-	MAX_NUM_PEERS              int
-	TARGET_NUM_PEERS           int
-	MAX_DOWNLOADING_CONNECTION int
-	MAX_UPLOADING_CONNECTION   int
-	MAX_OUR_REQUESTS           int
-	MAX_PEER_REQUESTS          int
-	port                       int
-	useUPnP                    bool
-	fileDir                    string
-	useDHT                     bool
-	trackerLessMode            bool
-	noCheckSum                 bool
-	doRealReadWrite            bool
-	rechokeTick                int
-	totalTransferSize          int64
-	changeProtocolName         bool
-}
-
-// BitTorrent message types. Sources:
-// http://bittorrent.org/beps/bep_0003.html
-// http://wiki.theory.org/BitTorrentSpecification
-const (
-	CHOKE = iota
-	UNCHOKE
-	INTERESTED
-	NOT_INTERESTED
-	HAVE
-	BITFIELD
-	REQUEST
-	PIECE
-	CANCEL
-	PORT // Not implemented. For DHT support.
-)
-
-const STORAGE_BLOCK_SIZE = 32 * 1024
-const BLOCK_META_SIZE = 24
-
-// Should be overriden by flag. Not thread safe.
-
-var cfg Config
-
-func init() {
-	cfg = Config{MAX_NUM_PEERS: 200, TARGET_NUM_PEERS: 30,
-		MAX_PEER_REQUESTS: 10,
-	}
-
-	flag.StringVar(&cfg.fileDir, "fileDir", ".", "path to directory where files are stored")
-	// If the port is 0, picks up a random port - but the DHT will keep
-	// running on port 0 because ListenUDP doesn't do that.
-	// Don't use port 6881 which blacklisted by some trackers.
-	flag.IntVar(&cfg.port, "port", 7777, "Port to listen on.")
-	flag.BoolVar(&cfg.useUPnP, "useUPnP", false, "Use UPnP to open port in firewall.")
-	flag.BoolVar(&cfg.useDHT, "useDHT", false, "Use DHT to get peers.")
-	flag.BoolVar(&cfg.trackerLessMode, "trackerLessMode", false, "Do not get peers from the tracker. Good for "+
-		"testing the DHT mode.")
-	flag.BoolVar(&cfg.noCheckSum, "nochecksum", false, "do not use checksum for fast starting")
-	rand.Seed(int64(time.Now().Nanosecond()))
-	flag.BoolVar(&cfg.doRealReadWrite, "doRealReadWrite", true, "do not io disk, using memory instead")
-	flag.IntVar(&cfg.STANDARD_BLOCK_LENGTH, "STANDARD_BLOCK_LENGTH", STORAGE_BLOCK_SIZE+BLOCK_META_SIZE, "stand block length")
-	flag.IntVar(&cfg.MAX_OUR_REQUESTS, "MAX_OUR_REQUESTS", 5, "max our requests")
-	flag.IntVar(&cfg.MAX_UPLOADING_CONNECTION, "MAX_UPLOADING_CONNECTION", 1, "max uploading connection")
-	flag.IntVar(&cfg.MAX_DOWNLOADING_CONNECTION, "MAX_DOWNLOADING_CONNECTION", 1, "max downloading connection")
-	flag.IntVar(&cfg.rechokeTick, "rechokeTick", 10, "rechoke tick seconds")
-	flag.Int64Var(&cfg.totalTransferSize, "totalTransferSize", 1*1024*1024*1024, "total transfer size")
-	flag.BoolVar(&cfg.changeProtocolName, "changeProtocolName", true, "change protocol name")
-
-	if cfg.changeProtocolName {
-		kBitTorrentHeader = []byte{'\x13', 'B', 'c', 't', 'T', 'o', 'l', 'l', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
-	}
-}
-
-func chooseListenPort() (listenPort int, err error) {
-	listenPort = cfg.port
-	if cfg.useUPnP {
-		log.Println("Using UPnP to open port.")
-		// TODO: Look for ports currently in use. Handle collisions.
-		var nat NAT
-		nat, err = Discover()
-		if err != nil {
-			log.Println("Unable to discover NAT:", err)
-			return
-		}
-		// TODO: Check if the port is already mapped by someone else.
-		err2 := nat.DeletePortMapping("TCP", listenPort)
-		if err2 != nil {
-			log.Println("Unable to delete port mapping", err2)
-		}
-		err = nat.AddPortMapping("TCP", listenPort, listenPort,
-			"Taipei-Torrent port "+strconv.Itoa(listenPort), 0)
-		if err != nil {
-			log.Println("Unable to forward listen port", err)
-			return
-		}
-	}
-	return
-}
 
 func (t *TorrentSession) listenForPeerConnections(conChan chan net.Conn) {
 	listenString := ":" + strconv.Itoa(t.si.Port)
@@ -345,17 +245,6 @@ func (t *TorrentSession) fetchTrackerInfo(event string) {
 	}()
 }
 
-func connectToPeer(peer string, ch chan net.Conn) {
-	// log.Println("Connecting to", peer)
-	conn, err := proxyNetDial("tcp", peer)
-	if err != nil {
-		log.Println("Failed to connect to", peer, err)
-	} else {
-		log.Println("Connected to", peer)
-		ch <- conn
-	}
-}
-
 func (t *TorrentSession) PeerExist(address string) (exist bool) {
 	index := strings.Index(address, ":")
 	ip := address[:index]
@@ -415,25 +304,12 @@ func (t *TorrentSession) ClosePeer(peer *peerState) {
 	t.RemovePeer(peer.address)
 }
 
-//todo: refactor
-func (t *TorrentSession) SchedulerChokeUnchoke() {
-	//(1). When leeching
-	// x是同时允许传输数据的peer数量
-	//1. 按照给我上传的速度排序，若有m个peer，每次choke掉N(N < x)个速度慢的peer，并从之前处于choke状态的peer中随机选择N个peer执行unchoke
-	//2. 反对冷落，后起动的peer可能完全没有数据，按照算法1的处理方式，后启动的peer可能比较冷，考虑每隔一段时间对速度最慢的peer执行unchoke
-
-	//(2). when seeding
-	// Unchoke the top 'MaxUploads' downloaders (peers that we are
-	// uploading to) and choke all others.
-
-	vec := make([]*peerState, 0)
-
-	transferBytes := 0
-
+//transferCount以k为单位
+func (t *TorrentSession) getSortedInterestedPeers() (vec []*peerState, transferCount int) {
 	if t.isSeeding() {
 		for _, v := range t.peers {
 			//insertion sort
-			if !v.peer_interested || v.isSeed {
+			if !v.peer_interested {
 				continue
 			}
 
@@ -445,13 +321,13 @@ func (t *TorrentSession) SchedulerChokeUnchoke() {
 			}
 
 			vec = append(vec[:i], append([]*peerState{v}, vec[i:]...)...)
-			transferBytes += v.upload
+			transferCount += v.upload
 			//log.Println(v.address, "download ", v.download, "upload", v.upload)
 		}
 	} else {
 		for _, v := range t.peers {
 			//insertion sort
-			if !v.peer_interested || v.isSeed {
+			if !v.peer_interested {
 				continue
 			}
 
@@ -463,89 +339,81 @@ func (t *TorrentSession) SchedulerChokeUnchoke() {
 			}
 
 			vec = append(vec[:i], append([]*peerState{v}, vec[i:]...)...)
-			transferBytes += v.download
+			transferCount += v.download
 			//log.Println(v.address, "download ", v.download, "upload", v.upload)
+		}
+	}
+
+	return
+}
+
+//todo: refactor
+func (t *TorrentSession) SchedulerChokeUnchoke() {
+	vec, _ := t.getSortedInterestedPeers()
+
+	//choke anyone who is not interested
+	for _, v := range t.peers {
+		if !v.peer_interested {
+			v.SetChoke(true)
 		}
 	}
 
 	interestedCount := len(vec)
 	log.Println("interestedCount", interestedCount, "peer count", len(t.peers))
 
-	for _, v := range t.peers {
-		if !v.peer_interested && !v.isSeed {
-			vec = append(vec, v)
-		}
-	}
-
 	if t.isSeeding() {
 		n := cfg.MAX_UPLOADING_CONNECTION
 		//todo: refactor to function
 		if interestedCount <= n {
 			for i := 0; i < interestedCount; i++ { //unchoke all
-				//log.Println("unchoke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
+				log.Println("unchoke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
 				vec[i].SetChoke(false)
 			}
 
 			//choke all others
 			for i := interestedCount; i < len(vec); i++ {
-				//log.Println("choke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
+				log.Println("choke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
 				vec[i].SetChoke(true)
 			}
 		} else {
 			for i := 0; i < n; i++ {
-				//log.Println("unchoke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
+				log.Println("unchoke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
 				vec[i].SetChoke(false)
 			}
 
 			left := vec[n:interestedCount]
-			//随机unchoke一个连接
+			//optimistic: 随机unchoke一个连接
 			opti := rand.Intn(len(left))
 
-			//log.Println("optimistic unchoke ", left[opti].address, "download", left[opti].download, "upload", left[opti].upload, "am_choking", vec[opti].am_choking)
+			log.Println("optimistic unchoke ", left[opti].address, "download", left[opti].download, "upload", left[opti].upload, "am_choking", vec[opti].am_choking)
 			left[opti].SetChoke(false)
-
-			//choke all others
-			for i := n; i < len(vec); i++ {
-				if i != n+opti {
-					//log.Println("choke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
-					vec[i].SetChoke(true)
-				}
-			}
 		}
 	} else {
 		n := cfg.MAX_DOWNLOADING_CONNECTION
 		//todo: refactor to function
 		if interestedCount <= n {
 			for i := 0; i < interestedCount; i++ { //unchoke all
-				//log.Println("unchoke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
+				log.Println("unchoke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
 				vec[i].SetChoke(false)
 			}
 
 			//choke all others
 			for i := interestedCount; i < len(vec); i++ {
-				//log.Println("choke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
+				log.Println("choke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
 				vec[i].SetChoke(true)
 			}
 		} else {
 			for i := 0; i < n; i++ {
-				//log.Println("unchoke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
+				log.Println("unchoke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
 				vec[i].SetChoke(false)
 			}
 
 			left := vec[n:interestedCount]
-			//随机unchoke一个连接
+			//optimistic: 随机unchoke一个连接
 			opti := rand.Intn(len(left))
 
-			//log.Println("optimistic unchoke ", left[opti].address, "download", left[opti].download, "upload", left[opti].upload, "am_choking", vec[opti].am_choking)
+			log.Println("optimistic unchoke ", left[opti].address, "download", left[opti].download, "upload", left[opti].upload, "am_choking", vec[opti].am_choking)
 			left[opti].SetChoke(false)
-
-			//choke all others
-			for i := n; i < len(vec); i++ {
-				if i != n+opti {
-					//log.Println("choke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
-					vec[i].SetChoke(true)
-				}
-			}
 		}
 	}
 
@@ -566,7 +434,7 @@ func (t *TorrentSession) DoTorrent() (err error) {
 	rechokeChan := time.Tick(time.Duration(cfg.rechokeTick) * time.Second)
 	// Start out polling tracker every 20 seconds untill we get a response.
 	// Maybe be exponential backoff here?
-	retrackerChan := time.Tick(20 * time.Second)
+	retrackerChan := time.Tick(10 * time.Second)
 	keepAliveChan := time.Tick(60 * time.Second)
 	t.trackerInfoChan = make(chan *TrackerResponse)
 
@@ -700,6 +568,13 @@ func (t *TorrentSession) DoTorrent() (err error) {
 		case _ = <-keepAliveChan:
 			now := time.Now()
 			for _, peer := range t.peers {
+				//kill dead connection
+				if time.Now().Sub(t.history[peer.address].lastActive) > 1*time.Minute {
+					log.Println("Closing peer", peer.address, "because kill dead connection")
+					t.ClosePeer(peer)
+					continue
+				}
+
 				if peer.lastReadTime.Second() != 0 && now.Sub(peer.lastReadTime) > 1*time.Minute {
 					log.Println("Closing peer", peer.address, "because timed out.")
 					t.ClosePeer(peer)
@@ -709,6 +584,8 @@ func (t *TorrentSession) DoTorrent() (err error) {
 				if err2 != nil {
 					if err2 != io.EOF {
 						log.Println("Closing peer", peer.address, "because", err2)
+					} else {
+						log.Println("Closing peer", peer.address, "because", "io.EOF")
 					}
 					t.ClosePeer(peer)
 					continue
@@ -927,6 +804,7 @@ func (t *TorrentSession) doCheckRequests(p *peerState) (err error) {
 
 func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 	if message == nil {
+		log.Println("The reader or writer goroutine has exited")
 		return io.EOF // The reader or writer goroutine has exited
 	}
 	if len(p.id) == 0 {
@@ -1004,6 +882,7 @@ func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 				return errors.New("Unexpected length")
 			}
 			p.peer_interested = false
+			p.SetChoke(true)
 		case HAVE:
 			if len(message) != 5 {
 				return errors.New("Unexpected length")
@@ -1079,10 +958,11 @@ func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 			}
 			p.upload += int(length) / 1024 //k
 			if _, ok := t.history[p.address]; !ok {
-				t.history[p.address] = &DownloadUpload{0, 0}
+				t.history[p.address] = &DownloadUpload{0, 0, time.Now()}
 			}
 
 			t.history[p.address].Uploaded += int64(length)
+			t.history[p.address].lastActive = time.Now()
 			t.sendRequest(p, index, begin, length)
 		case PIECE:
 			if len(message) < 9 {
@@ -1115,9 +995,10 @@ func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 
 			p.download += int(length) / 1024 // k
 			if _, ok := t.history[p.address]; !ok {
-				t.history[p.address] = &DownloadUpload{0, 0}
+				t.history[p.address] = &DownloadUpload{0, 0, time.Now()}
 			}
 			t.history[p.address].Downloaded += int64(length)
+			t.history[p.address].lastActive = time.Now()
 
 			context := &WriteContext{peer: p, whichPiece: index, begin: begin, length: length}
 			args := &IoArgs{f: t.fileStore, ioMode: MODE_WRITE, buf: message[9:], offset: globalOffset, context: context}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"log"
 	"net"
 	"time"
 )
@@ -14,6 +15,7 @@ type peerMessage struct {
 type DownloadUpload struct {
 	Uploaded   int64
 	Downloaded int64
+	lastActive time.Time
 }
 
 type peerState struct {
@@ -68,6 +70,17 @@ L:
 	// We throw away any messages waiting to be sent, including the
 	// nil message that is automatically sent when the in channel is closed
 	close(out)
+}
+
+func connectToPeer(peer string, ch chan net.Conn) {
+	// log.Println("Connecting to", peer)
+	conn, err := proxyNetDial("tcp", peer)
+	if err != nil {
+		log.Println("Failed to connect to", peer, err)
+	} else {
+		log.Println("Connected to", peer)
+		ch <- conn
+	}
 }
 
 func NewPeerState(conn net.Conn) *peerState {
@@ -242,15 +255,17 @@ func (p *peerState) peerReader(msgChan chan peerMessage) {
 		var n uint32
 		n, err = readNBOUint32(p.conn)
 		if err != nil {
+			log.Println(err)
 			goto exit
 		}
 		if n > 130*1024 {
-			// log.Println("Message size too large: ", n)
+			log.Println("Message size too large: ", n)
 			goto exit
 		}
 		buf := make([]byte, n)
 		_, err = io.ReadFull(p.conn, buf)
 		if err != nil {
+			log.Println(err)
 			goto exit
 		}
 		msgChan <- peerMessage{p, buf}

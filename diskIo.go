@@ -67,6 +67,20 @@ func IoRoutine(request <-chan *IoArgs, responce chan<- interface{}) {
 					panic("")
 				}
 			}
+		} else {
+			if arg.ioMode == MODE_READ {
+				if c, ok := arg.context.(*ReadContext); ok {
+					c.realLength = c.length
+				} else {
+					panic("")
+				}
+			} else { //write
+				if c, ok := arg.context.(*WriteContext); ok {
+					c.realLength = c.length
+				} else {
+					panic("")
+				}
+			}
 		}
 
 		sec := time.Now().Sub(start).Seconds()
