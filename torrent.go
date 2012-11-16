@@ -308,12 +308,13 @@ func (t *TorrentSession) ClosePeer(peer *peerState) {
 	t.RemovePeer(peer.address)
 }
 
-//transferCount以k为单位
-func (t *TorrentSession) getSortedInterestedPeers() (vec []*peerState, transferCount int) {
+
+func (t *TorrentSession) getSortedInterestedPeers() (vec []*peerState, transferBytes int64) {
 	if t.isSeeding() {
 		for _, v := range t.peers {
 			//insertion sort
 			if !v.peer_interested {
+				transferBytes += v.download
 				continue
 			}
 
@@ -325,13 +326,14 @@ func (t *TorrentSession) getSortedInterestedPeers() (vec []*peerState, transferC
 			}
 
 			vec = append(vec[:i], append([]*peerState{v}, vec[i:]...)...)
-			transferCount += v.upload
+			transferBytes += v.upload
 			//log.Println(v.address, "download ", v.download, "upload", v.upload)
 		}
 	} else {
 		for _, v := range t.peers {
 			//insertion sort
 			if !v.peer_interested {
+				transferBytes += v.download
 				continue
 			}
 
@@ -343,7 +345,7 @@ func (t *TorrentSession) getSortedInterestedPeers() (vec []*peerState, transferC
 			}
 
 			vec = append(vec[:i], append([]*peerState{v}, vec[i:]...)...)
-			transferCount += v.download
+			transferBytes += v.download
 			//log.Println(v.address, "download ", v.download, "upload", v.upload)
 		}
 	}
@@ -353,7 +355,7 @@ func (t *TorrentSession) getSortedInterestedPeers() (vec []*peerState, transferC
 
 //todo: refactor
 func (t *TorrentSession) SchedulerChokeUnchoke() {
-	vec, _ := t.getSortedInterestedPeers()
+	vec, transferBytes := t.getSortedInterestedPeers()
 
 	//choke anyone who is not interested
 	for _, v := range t.peers {
@@ -363,25 +365,25 @@ func (t *TorrentSession) SchedulerChokeUnchoke() {
 	}
 
 	interestedCount := len(vec)
-	log.Println("interestedCount", interestedCount, "peer count", len(t.peers))
+	log.Printf("interestedCount %v, peer count %v, speed %v k/s\n", interestedCount, len(t.peers), transferBytes/1024/int64(cfg.rechokeTick))
 
 	if t.isSeeding() {
 		n := cfg.MAX_UPLOADING_CONNECTION
 		//todo: refactor to function
 		if interestedCount <= n {
 			for i := 0; i < interestedCount; i++ { //unchoke all
-				log.Println("unchoke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
+				log.Printf("unchoke %v download %v k/s, upload %v k/s\n", vec[i].address, vec[i].download/1024/int64(cfg.rechokeTick), vec[i].upload/1024/int64(cfg.rechokeTick))
 				vec[i].SetChoke(false)
 			}
 
 			//choke all others
 			for i := interestedCount; i < len(vec); i++ {
-				log.Println("choke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
+				log.Printf("choke %v download %v k/s, upload %v k/s\n", vec[i].address, vec[i].download/1024/int64(cfg.rechokeTick), vec[i].upload/1024/int64(cfg.rechokeTick))
 				vec[i].SetChoke(true)
 			}
 		} else {
 			for i := 0; i < n; i++ {
-				log.Println("unchoke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
+				log.Printf("unchoke %v download %v k/s, upload %v k/s\n", vec[i].address, vec[i].download/1024/int64(cfg.rechokeTick), vec[i].upload/1024/int64(cfg.rechokeTick))
 				vec[i].SetChoke(false)
 			}
 
@@ -389,7 +391,7 @@ func (t *TorrentSession) SchedulerChokeUnchoke() {
 			//optimistic: 随机unchoke一个连接
 			opti := rand.Intn(len(left))
 
-			log.Println("optimistic unchoke ", left[opti].address, "download", left[opti].download, "upload", left[opti].upload, "am_choking", vec[opti].am_choking)
+			log.Printf("optimistic unchoke %v download %v k/s, upload %v k/s\n", left[opti].address, left[opti].download/1024/int64(cfg.rechokeTick), left[opti].upload/1024/int64(cfg.rechokeTick))
 			left[opti].SetChoke(false)
 		}
 	} else {
@@ -397,18 +399,18 @@ func (t *TorrentSession) SchedulerChokeUnchoke() {
 		//todo: refactor to function
 		if interestedCount <= n {
 			for i := 0; i < interestedCount; i++ { //unchoke all
-				log.Println("unchoke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
+				log.Printf("unchoke %v download %v k/s, upload %v k/s\n", vec[i].address, vec[i].download/1024/int64(cfg.rechokeTick), vec[i].upload/1024/int64(cfg.rechokeTick))
 				vec[i].SetChoke(false)
 			}
 
 			//choke all others
 			for i := interestedCount; i < len(vec); i++ {
-				log.Println("choke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
+				log.Printf("choke %v download %v k/s, upload %v k/s\n", vec[i].address, vec[i].download/1024/int64(cfg.rechokeTick), vec[i].upload/1024/int64(cfg.rechokeTick))
 				vec[i].SetChoke(true)
 			}
 		} else {
 			for i := 0; i < n; i++ {
-				log.Println("unchoke ", vec[i].address, "download", vec[i].download, "upload", vec[i].upload, "am_choking", vec[i].am_choking)
+				log.Printf("unchoke %v download %v k/s, upload %v k/s\n", vec[i].address, vec[i].download/1024/int64(cfg.rechokeTick), vec[i].upload/1024/int64(cfg.rechokeTick))
 				vec[i].SetChoke(false)
 			}
 
@@ -416,7 +418,7 @@ func (t *TorrentSession) SchedulerChokeUnchoke() {
 			//optimistic: 随机unchoke一个连接
 			opti := rand.Intn(len(left))
 
-			log.Println("optimistic unchoke ", left[opti].address, "download", left[opti].download, "upload", left[opti].upload, "am_choking", vec[opti].am_choking)
+			log.Printf("optimistic unchoke %v download %v k/s, upload %v k/s\n", left[opti].address, left[opti].download/1024/int64(cfg.rechokeTick), left[opti].upload/1024/int64(cfg.rechokeTick))
 			left[opti].SetChoke(false)
 		}
 	}
@@ -605,7 +607,6 @@ func (t *TorrentSession) DoTorrent() (err error) {
 				}
 			}
 		}
-
 	}
 	return
 }
@@ -969,7 +970,7 @@ func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 			if int(length) != cfg.STANDARD_BLOCK_LENGTH {
 				log.Println(int(length), "but stand block length", cfg.STANDARD_BLOCK_LENGTH)
 			}
-			p.upload += int(length) / 1024 //k
+			p.upload += int64(length)
 
 			t.history[p.address].Uploaded += int64(length)
 			t.history[p.address].lastActive = time.Now()
@@ -1003,7 +1004,7 @@ func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 			}
 			globalOffset := int64(index)*t.m.Info.PieceLength + int64(begin)
 
-			p.download += int(length) / 1024 // k
+			p.download += int64(length)
 
 			t.history[p.address].Downloaded += int64(length)
 			t.history[p.address].lastActive = time.Now()
@@ -1068,7 +1069,6 @@ func (t *TorrentSession) sendRequest(peer *peerState, index, begin, length uint3
 
 		globalOffset := int64(index)*t.m.Info.PieceLength + int64(begin)
 
-		//log.Println("cache miss ", globalOffset)
 		//asyn read
 		rc := &ReadContext{peer: peer, msgBuf: buf, globalOffset: globalOffset, length: int(length)}
 		args := &IoArgs{f: t.fileStore, ioMode: MODE_READ, buf: buf[9:], offset: globalOffset, context: rc}

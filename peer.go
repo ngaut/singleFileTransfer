@@ -33,8 +33,8 @@ type peerState struct {
 	peer_interested bool // peer is interested in this client
 	peer_requests   map[uint64]bool
 	our_requests    map[uint64]time.Time // What we requested, when we requested it
-	upload          int
-	download        int
+	upload          int64
+	download        int64
 	lastSchedule    time.Time
 	isSeed          bool
 }
