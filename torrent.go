@@ -316,7 +316,10 @@ func (t *TorrentSession) ClosePeer(peer *peerState) {
 	log.Println("Closing peer", peer.address)
 	for i := 0; i < t.totalPieces; i++ {
 		if peer.have.IsSet(i) {
-			t.DecPieceCnt(i)
+			cnt := t.DecPieceCnt(i)
+			if cnt == 0 {
+				t.RemovePieceCnt(i)
+			}
 		}
 	}
 
@@ -811,6 +814,10 @@ func (t *TorrentSession) RecordBlock(p *peerState, piece, begin, length uint32) 
 			t.si.Left -= int64(v.pieceLength)
 			t.pieceSet.Set(int(piece))
 			t.goodPieces++
+
+			//do not track this piece any more
+			t.RemovePieceCnt(int(piece))
+
 			//log.Println("Have", t.goodPieces, "of", t.totalPieces, "pieces.")
 			if t.isSeeding() {
 				log.Printf("\n\n\ndownload finish\n\n\n")
@@ -891,13 +898,21 @@ func (t *TorrentSession) IncPieceCnt(pieceNo int) {
 	}
 }
 
-func (t *TorrentSession) DecPieceCnt(pieceNo int) {
-	item := &PieceCnt{pieceNo, 1}
+func (t *TorrentSession) RemovePieceCnt(pieceNo int) {
+	item := &PieceCnt{pieceNo, 0}
+	t.pieceStatics.Delete(item)
+}
+
+func (t *TorrentSession) DecPieceCnt(pieceNo int) (count int) {
+	item := &PieceCnt{pieceNo, 0}
 	if pc := t.pieceStatics.Get(item); pc != nil {
-		pc.(*PieceCnt).count++
-	} else {
-		t.pieceStatics.ReplaceOrInsert(item)
+		pc.(*PieceCnt).count--
+		count = pc.(*PieceCnt).count
+	} else { //do not exist if item was removed
+
 	}
+
+	return
 }
 
 func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
