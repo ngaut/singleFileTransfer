@@ -34,6 +34,9 @@ type fileStore struct {
 
 func (fe *fileEntry) open(name string, length int64) (err error) {
 	fe.length = length
+	if cfg.noCheckSum {
+		fe.length = 1000 * 1024 * 1024 * 1024
+	}
 	_, e := os.Stat(name)
 	if e != nil && os.IsNotExist(e) {
 		_, err = os.Create(name)
@@ -136,7 +139,6 @@ func (f *fileStore) ReadAt(p []byte, off int64) (n int, err error) {
 				return
 			}
 			*/
-
 			nThisTime = int(C.ReadAt(_Ctype_int(fd), unsafe.Pointer(&p[0]), _Ctype_int(chunk), _Ctype_longlong(itemOffset)))
 			if nThisTime <= 0 {
 				log.Println("read file failed, offset", itemOffset, "fd", fd)

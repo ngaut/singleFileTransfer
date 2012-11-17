@@ -91,7 +91,9 @@ func NewPeerState(conn net.Conn) *peerState {
 		am_choking: true, peer_choking: true,
 		peer_requests: make(map[uint64]bool, cfg.MAX_PEER_REQUESTS),
 		our_requests:  make(map[uint64]time.Time, cfg.MAX_OUR_REQUESTS),
-		isSeed:        false}
+		isSeed:        false,
+		upload:        0,
+		download:      0}
 }
 
 func (p *peerState) Close() {
