@@ -60,3 +60,11 @@ type CacheValue struct {
 func (self *CacheValue) Size() int {
 	return len(self.buf)
 }
+
+func min(a, b int) int {
+	if a > b {
+		return a
+	}
+
+	return b	
+}

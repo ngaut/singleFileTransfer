@@ -82,11 +82,14 @@ type TorrentSession struct {
 	ioRequestChan   chan *IoArgs
 	ioResponceChan  chan interface{}
 	fastResumeFile  string
-	pieceStatics    *llrb.Tree
+	pieceStatics    map[int]int
+	weGot			int
+	tickCnt			int 
+	startTime		time.Time
 }
 
 //func lessInt(a, b interface{}) bool { return a.(int) < b.(int) }
-func pieceCntLess(a, b interface{}) bool { return a.(*PieceCnt).pieceNo < b.(*PieceCnt).pieceNo }
+func pieceCntLess(a, b interface{}) bool { return a.(*PieceCnt).count < b.(*PieceCnt).count }
 
 func NewTorrentSession(torrent string) (ts *TorrentSession, err error) {
 
@@ -102,7 +105,7 @@ func NewTorrentSession(torrent string) (ts *TorrentSession, err error) {
 		history:         make(map[string]*DownloadUpload),
 		ioRequestChan:   make(chan *IoArgs, 100),
 		ioResponceChan:  make(chan interface{}, 100),
-		pieceStatics:    llrb.New(pieceCntLess),
+		pieceStatics:    make(map[int]int),
 	}
 
 	t.m, err = getMetaInfo(torrent)
@@ -133,8 +136,8 @@ func NewTorrentSession(torrent string) (ts *TorrentSession, err error) {
 	t.fastResumeFile = torrent + ".fastResume"
 
 	if cfg.noCheckSum {
-		blocks := cfg.totalTransferSize  / STORAGE_BLOCK_SIZE
-		t.totalSize = blocks * int64(cfg.STANDARD_BLOCK_LENGTH) + cfg.totalTransferSize % STORAGE_BLOCK_SIZE
+		blocks := cfg.totalTransferSize / STORAGE_BLOCK_SIZE
+		t.totalSize = blocks*int64(cfg.STANDARD_BLOCK_LENGTH) + cfg.totalTransferSize%STORAGE_BLOCK_SIZE
 		//必须是整数倍
 		t.m.Info.PieceLength = int64(cfg.STANDARD_BLOCK_LENGTH * 50)
 	}
@@ -209,6 +212,8 @@ func NewTorrentSession(torrent string) (ts *TorrentSession, err error) {
 	}
 
 	go IoRoutine(t.ioRequestChan, t.ioResponceChan)
+
+	t.startTime = time.Now()
 
 	return t, err
 }
@@ -410,11 +415,13 @@ func (t *TorrentSession) SchedulerChokeUnchoke() {
 				vec[i].SetChoke(false)
 			}
 
-			left := vec[n:interestedCount]
-			//optimistic: 随机unchoke一个连接
-			opti := rand.Intn(len(left))
-			log.Printf("optimistic unchoke %v download %v k/s, upload %v k/s\n", left[opti].address, left[opti].download/1024/tick, left[opti].upload/1024/tick)
-			left[opti].SetChoke(false)
+			if t.tickCnt % 3 == 0 {	//optimistic unchoke every 30 seconds
+				left := vec[n:interestedCount]
+				//optimistic: 随机unchoke一个连接
+				opti := rand.Intn(len(left))
+				log.Printf("optimistic unchoke %v download %v k/s, upload %v k/s\n", left[opti].address, left[opti].download/1024/tick, left[opti].upload/1024/tick)
+				left[opti].SetChoke(false)
+			}
 		}
 	} else {
 		n := cfg.MAX_DOWNLOADING_CONNECTION
@@ -436,11 +443,13 @@ func (t *TorrentSession) SchedulerChokeUnchoke() {
 				vec[i].SetChoke(false)
 			}
 
-			left := vec[n:interestedCount]
-			//optimistic: 随机unchoke一个连接
-			opti := rand.Intn(len(left))
-			log.Printf("optimistic unchoke %v download %v k/s, upload %v k/s\n", left[opti].address, left[opti].download/1024/tick, left[opti].upload/1024/tick)
-			left[opti].SetChoke(false)
+			if t.tickCnt % 3 == 0 {	//optimistic unchoke every 30 seconds
+				left := vec[n:interestedCount]
+				//optimistic: 随机unchoke一个连接
+				opti := rand.Intn(len(left))
+				log.Printf("optimistic unchoke %v download %v k/s, upload %v k/s\n", left[opti].address, left[opti].download/1024/tick, left[opti].upload/1024/tick)
+				left[opti].SetChoke(false)
+			}
 		}
 	}
 
@@ -450,6 +459,8 @@ func (t *TorrentSession) SchedulerChokeUnchoke() {
 		ps.download = 0
 		ps.lastSchedule = time.Now()
 	}
+
+	t.tickCnt++
 
 	t.SaveResumeFile()
 }
@@ -485,7 +496,7 @@ func (t *TorrentSession) DoTorrent() (err error) {
 	}
 
 	for {
-		select {	//由于select选择的channel是从active的channel中随机选择，所以对于多个channel而言，先产生的事件不一定先被select到
+		select { //由于select选择的channel是从active的channel中随机选择，所以对于多个channel而言，先产生的事件不一定先被select到
 		case _ = <-retrackerChan:
 			if !cfg.trackerLessMode {
 				t.fetchTrackerInfo("")
@@ -543,7 +554,7 @@ func (t *TorrentSession) DoTorrent() (err error) {
 
 		case pm := <-t.peerMessageChan:
 			peer, message := pm.peer, pm.message
-			if t.PeerExist(peer.address) {	//peer may already being closed
+			if t.PeerExist(peer.address) { //peer may already being closed
 				peer.lastReadTime = time.Now()
 				err2 := t.DoMessage(peer, message)
 				if err2 != nil {
@@ -554,7 +565,7 @@ func (t *TorrentSession) DoTorrent() (err error) {
 					}
 					t.ClosePeer(peer)
 				}
-			}else{
+			} else {
 				log.Println("peer already closed")
 			}
 		case conn := <-conChan:
@@ -686,60 +697,57 @@ func (t *TorrentSession) RequestBlock(p *peerState) (err error) {
 }
 
 func (t *TorrentSession) ChoosePiece(p *peerState) (piece int) {
-	//find rarest piece
-	x := rand.Intn(t.totalPieces)
-	for i := x; i < t.totalPieces; i++ {
-		if !t.pieceSet.IsSet(i) && p.have.IsSet(i) && !t.IsActivePiece(i) {
-			item := &PieceCnt{i, 0}
-			if pc := t.pieceStatics.Get(item); pc != nil {
-				if p.isSeed {
-					if pc.(*PieceCnt).count == 1 {
-						log.Printf("choose piece %v from seed\n", i)
-						return i
-					}
-				} else {
-					if pc.(*PieceCnt).count < 3 {
-						log.Printf("choose piece %v from leach\n", i)
-						return i
-					}
-				}
-			} else {
-				panic("never happend")
-			}
+
+	randomChoose := func()(piece int){
+		n := t.totalPieces
+		start := rand.Intn(n)
+		piece = t.checkRange(p, start, n)
+		if piece == -1 {
+			piece = t.checkRange(p, 0, start)
+		}
+
+		log.Println("random choose", piece)
+		return piece
+	}
+
+	//we should random choose some first
+	if t.weGot < 4 {
+		return randomChoose()
+	}
+
+	sortPieces := llrb.New(pieceCntLess)
+	for k, v := range t.pieceStatics {
+		if !t.pieceSet.IsSet(k) && p.have.IsSet(k) && !t.IsActivePiece(k) {
+			sortPieces.InsertNoReplace(&PieceCnt{pieceNo: k, count: v})
 		}
 	}
 
-	for i := 0; i < x; i++ {
-		if !t.pieceSet.IsSet(i) && p.have.IsSet(i) && !t.IsActivePiece(i) {
-			item := &PieceCnt{i, 0}
-			if pc := t.pieceStatics.Get(item); pc != nil {
-				if p.isSeed {
-					if pc.(*PieceCnt).count == 1 {
-						log.Printf("choose piece %v from seed\n", i)
-						return i
-					}
-				} else {
-					if pc.(*PieceCnt).count < 3 {
-						log.Printf("choose piece %v from leach\n", i)
-						return i
-					}
-				}
-			} else {
-				panic("never happend")
-			}
+	pcs := make([]int, min(10000, t.totalPieces))
+	min := sortPieces.DeleteMin() //rarest piece
+	if min == nil {
+		log.Println("no rarest piece found")
+		return -1
+	}
+
+	pcs[0] = min.(*PieceCnt).pieceNo
+	index := 1
+	for index < len(pcs) {
+		item := sortPieces.DeleteMin()
+		if item == nil || item.(*PieceCnt).count != min.(*PieceCnt).count {
+			break
 		}
+
+		pcs[index] =  item.(*PieceCnt).pieceNo
+		index++
 	}
 
-	//no rare piece found, just pick a random piece
-	
-	n := t.totalPieces
-	start := rand.Intn(n)
-	piece = t.checkRange(p, start, n)
-	if piece == -1 {
-		piece = t.checkRange(p, 0, start)
-	}
+	piece = pcs[rand.Intn(index)]
 
-	log.Println("random choose", piece)
+	if p.isSeed {
+		log.Printf("total %v choose piece %v, from seed\n", index, piece)
+	} else {
+		log.Printf("total %v choose piece %v, from leach\n", index, piece)
+	}
 
 	return
 }
@@ -829,13 +837,15 @@ func (t *TorrentSession) RecordBlock(p *peerState, piece, begin, length uint32) 
 			t.si.Left -= int64(v.pieceLength)
 			t.pieceSet.Set(int(piece))
 			t.goodPieces++
+			t.weGot++
 
 			//do not track this piece any more
 			t.RemovePieceCnt(int(piece))
 
 			//log.Println("Have", t.goodPieces, "of", t.totalPieces, "pieces.")
 			if t.isSeeding() {
-				log.Printf("\n\n\ndownload finish\n\n\n")
+				log.Printf("\n\n\ndownload finish\n")
+				log.Printf("everage speed %v M/s\n\n\n", t.totalSize / 1024 / 1024 / int64(time.Since(t.startTime).Seconds()))
 				t.fetchTrackerInfo("completed")
 				// TODO: Drop connections to all seeders.
 				for k, v := range t.history {
@@ -897,6 +907,7 @@ func (t *TorrentSession) doCheckRequests(p *peerState) (err error) {
 		if now.Sub(v).Seconds() > 30 {
 			piece := int(k >> 32)
 			block := int(k) / cfg.STANDARD_BLOCK_LENGTH
+			//todo: may be we should close this peer
 			log.Println("timing out request of", piece, ".", block, "from", p.address)
 			t.removeRequest(piece, block)
 		}
@@ -905,25 +916,22 @@ func (t *TorrentSession) doCheckRequests(p *peerState) (err error) {
 }
 
 func (t *TorrentSession) IncPieceCnt(pieceNo int) {
-	item := &PieceCnt{pieceNo, 1}
-	if pc := t.pieceStatics.Get(item); pc != nil {
-		pc.(*PieceCnt).count++
+	if _, exist := t.pieceStatics[pieceNo]; exist {
+		t.pieceStatics[pieceNo]++
 	} else {
-		t.pieceStatics.ReplaceOrInsert(item)
+		t.pieceStatics[pieceNo] = 1
 	}
 }
 
 func (t *TorrentSession) RemovePieceCnt(pieceNo int) {
 	//log.Printf("remove piece %v\n", pieceNo)
-	item := &PieceCnt{pieceNo, 0}
-	t.pieceStatics.Delete(item)
+	delete(t.pieceStatics, pieceNo)
 }
 
 func (t *TorrentSession) DecPieceCnt(pieceNo int) (count int) {
-	item := &PieceCnt{pieceNo, 0}
-	if pc := t.pieceStatics.Get(item); pc != nil {
-		pc.(*PieceCnt).count--
-		count = pc.(*PieceCnt).count
+	if _, exist := t.pieceStatics[pieceNo]; exist {
+		t.pieceStatics[pieceNo]--
+		count = t.pieceStatics[pieceNo]
 	} else { //do not exist if item was removed
 
 	}
@@ -1012,7 +1020,7 @@ func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 				return errors.New("Unexpected length")
 			}
 			p.peer_interested = false
-			p.SetChoke(true)
+			//p.SetChoke(true)
 		case HAVE:
 			if len(message) != 5 {
 				return errors.New("Unexpected length")
