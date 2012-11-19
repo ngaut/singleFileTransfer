@@ -86,6 +86,7 @@ type TorrentSession struct {
 	weGot			int
 	tickCnt			int 
 	startTime		time.Time
+	lastSendingHave int
 }
 
 //func lessInt(a, b interface{}) bool { return a.(int) < b.(int) }
@@ -375,6 +376,49 @@ func (t *TorrentSession) getSortedInterestedPeers() (vec []*peerState) {
 	return
 }
 
+func (t *TorrentSession)SchedulerSuperSeeding() {
+	//todo: 对网络上稀缺的块发送have消息
+	if len(t.peers) == 0 {
+		return
+	}
+
+	everage := 100 * 1024 * 1024 / t.m.Info.PieceLength / int64(len(t.peers))	//每隔10秒放出100M数据
+	for _, p := range t.peers {
+		have := 0
+		for i := t.lastSendingHave; have < int(everage) && i < t.totalPieces && t.lastSendingHave < t.totalPieces; i++ {
+			if !p.have.IsSet(i) {
+				haveMsg := make([]byte, 5)
+				haveMsg[0] = 4
+				uint32ToBytes(haveMsg[1:5], uint32(i))
+				p.sendMessage(haveMsg)
+				have++
+			}
+
+			t.lastSendingHave++
+		}
+	}
+
+	log.Println("last send have piece no", t.lastSendingHave)
+	if t.lastSendingHave == t.totalPieces && t.tickCnt % 3 == 0 {
+		log.Printf("\n\n\tyeah! loop again\n\n")
+		t.lastSendingHave = 0
+	}
+
+	t.SchedulerChokeUnchoke();
+
+/*
+	//reset
+	tick := int64(cfg.rechokeTick)
+	for _, ps := range t.peers {
+		log.Printf("%v download %v k/s, upload %v k/s\n", ps.address, ps.download/1024/tick, ps.upload/1024/tick)
+		ps.upload = 0
+		ps.download = 0
+		ps.lastSchedule = time.Now()
+	}
+	*/
+
+}
+
 //todo: refactor
 func (t *TorrentSession) SchedulerChokeUnchoke() {
 	vec := t.getSortedInterestedPeers()
@@ -610,7 +654,11 @@ func (t *TorrentSession) DoTorrent() (err error) {
 				}
 			}
 
-			t.SchedulerChokeUnchoke()
+			if cfg.superSeeding {
+				t.SchedulerSuperSeeding()
+			}else{
+				t.SchedulerChokeUnchoke()
+			}
 
 		case _ = <-keepAliveChan:
 			now := time.Now()
@@ -968,14 +1016,23 @@ func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 			return
 		}
 
-		//LiuQi: exchange bitfield
-		length := (t.totalPieces + 8 - 1) / 8
-		//log.Println("exchange bitfield", "length", length)
-		bitfieldMsg := make([]byte, length+1)
-		bitfieldMsg[0] = BITFIELD
-		copy(bitfieldMsg[1:], t.pieceSet.b)
-		log.Println("send bitfield to", p.address)
-		p.sendMessage(bitfieldMsg)
+		if t.isSeeding() && cfg.superSeeding {
+			length := (t.totalPieces + 8 - 1) / 8
+			//log.Println("exchange bitfield", "length", length)
+			bitfieldMsg := make([]byte, length+1)
+			bitfieldMsg[0] = BITFIELD
+			//copy(bitfieldMsg[1:], t.pieceSet.b)
+			log.Println("send bitfield to", p.address)
+			p.sendMessage(bitfieldMsg)
+		}else{
+			length := (t.totalPieces + 8 - 1) / 8
+			//log.Println("exchange bitfield", "length", length)
+			bitfieldMsg := make([]byte, length+1)
+			bitfieldMsg[0] = BITFIELD
+			copy(bitfieldMsg[1:], t.pieceSet.b)
+			log.Println("send bitfield to", p.address)
+			p.sendMessage(bitfieldMsg)
+		}
 
 	} else {
 		if len(message) == 0 { // keep alive

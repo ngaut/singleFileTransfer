@@ -22,6 +22,7 @@ type Config struct {
 	rechokeTick                int
 	totalTransferSize          int64
 	changeProtocolName         bool
+	superSeeding			   bool
 }
 
 var cfg Config
@@ -45,11 +46,12 @@ func init() {
 	flag.BoolVar(&cfg.doRealReadWrite, "doRealReadWrite", true, "do not io disk, using memory instead")
 	flag.IntVar(&cfg.STANDARD_BLOCK_LENGTH, "STANDARD_BLOCK_LENGTH", STORAGE_BLOCK_SIZE+BLOCK_META_SIZE, "stand block length")
 	flag.IntVar(&cfg.MAX_OUR_REQUESTS, "MAX_OUR_REQUESTS", 5, "max our requests")
-	flag.IntVar(&cfg.MAX_UPLOADING_CONNECTION, "MAX_UPLOADING_CONNECTION", 1, "max uploading connection")
-	flag.IntVar(&cfg.MAX_DOWNLOADING_CONNECTION, "MAX_DOWNLOADING_CONNECTION", 1, "max downloading connection")
+	flag.IntVar(&cfg.MAX_UPLOADING_CONNECTION, "MAX_UPLOADING_CONNECTION", 3, "max uploading connection")
+	flag.IntVar(&cfg.MAX_DOWNLOADING_CONNECTION, "MAX_DOWNLOADING_CONNECTION", 3, "max downloading connection")
 	flag.IntVar(&cfg.rechokeTick, "rechokeTick", 10, "rechoke tick seconds")
 	flag.Int64Var(&cfg.totalTransferSize, "totalTransferSize", 1*1024*1024*1024, "total transfer size")
 	flag.BoolVar(&cfg.changeProtocolName, "changeProtocolName", true, "change protocol name")
+	flag.BoolVar(&cfg.superSeeding, "superSeeding", false, "as super seeding")
 
 	if cfg.changeProtocolName {
 		kBitTorrentHeader = []byte{'\x13', 'B', 'c', 't', 'T', 'o', 'l', 'l', 'e', 'n', 't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'}
