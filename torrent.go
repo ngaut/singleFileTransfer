@@ -382,7 +382,7 @@ func (t *TorrentSession)SchedulerSuperSeeding() {
 		return
 	}
 
-	everage := 100 * 1024 * 1024 / t.m.Info.PieceLength / int64(len(t.peers))	//每隔10秒放出100M数据
+	everage := 200 * 1024 * 1024 / t.m.Info.PieceLength / int64(len(t.peers))	//每隔10秒放出数据
 	for _, p := range t.peers {
 		have := 0
 		for i := t.lastSendingHave; have < int(everage) && i < t.totalPieces && t.lastSendingHave < t.totalPieces; i++ {
@@ -533,7 +533,7 @@ func (t *TorrentSession) DoTorrent() (err error) {
 		t.dht.PeersRequest(t.m.InfoHash, true)
 	}
 
-	if !t.isSeeding() {
+	if t.isSeeding() {
 		t.fetchTrackerInfo("completed")
 	} else {
 		t.fetchTrackerInfo("started")
@@ -561,10 +561,6 @@ func (t *TorrentSession) DoTorrent() (err error) {
 			}
 			// log.Println("Contacting", newPeerCount, "new peers (thanks DHT!)")
 		case ti := <-t.trackerInfoChan:
-			if t.isSeeding() {
-				break
-			}
-
 			t.ti = ti
 			//log.Println("Torrent has", t.ti.Complete, "seeders and", t.ti.Incomplete, "leachers.")
 			if !cfg.trackerLessMode {
@@ -688,7 +684,7 @@ func (t *TorrentSession) DoTorrent() (err error) {
 					continue
 				}
 
-				if time.Now().Sub(t.history[peer.address].lastActive) > 1*time.Minute {
+				if time.Now().Sub(t.history[peer.address].lastActive) > 2*time.Minute {
 					log.Println("Closing peer", peer.address, "because kill dead connection")
 					t.ClosePeer(peer)
 					break
