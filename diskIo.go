@@ -59,7 +59,7 @@ func IoRoutine(request <-chan *IoArgs, responce chan<- interface{}) {
 		}
 
 		//batch process
-		if cnt > 50 {
+		if cnt > cap(request) / 2 {
 			log.Println("io is busy, batch io count", cnt)
 		}
 

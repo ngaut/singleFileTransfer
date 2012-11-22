@@ -107,8 +107,8 @@ func NewTorrentSession(torrent string) (ts *TorrentSession, err error) {
 		peerMessageChan: make(chan peerMessage, 100),
 		activePieces:    make(map[int]*ActivePiece),
 		history:         make(map[string]*DownloadUpload),
-		ioRequestChan:   make(chan *IoArgs, 100),
-		ioResponceChan:  make(chan interface{}, 100),
+		ioRequestChan:   make(chan *IoArgs, 300),
+		ioResponceChan:  make(chan interface{}, 300),
 		pieceStatics:    make(map[int]int),
 		cache:           cache.NewLRUCache(30 * 1024 * 1024),
 		cacheCounter:    new(CacheCounter),
@@ -389,7 +389,7 @@ func (t *TorrentSession) SchedulerSuperSeeding() {
 
 	sortPieces := llrb.New(pieceCntLess)
 	for k, v := range t.pieceStatics {
-		if k > t.lastSendingHave {
+		if k >= t.lastSendingHave {
 			sortPieces.InsertNoReplace(&PieceCnt{pieceNo: k, count: v})
 		}
 	}

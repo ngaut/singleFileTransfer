@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <fcntl.h>
 
-#define USING_DYNAMIC_PLUGIN 1
+#define USING_DYNAMIC_PLUGIN 1	//notice: if not using plugin, we need to change t.totalSize
 
 
 #define _FILE_OFFSET_BITS 64
