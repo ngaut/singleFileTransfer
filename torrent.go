@@ -87,9 +87,9 @@ type TorrentSession struct {
 	weGot			int
 	tickCnt			int 
 	startTime		time.Time
-	lastSendingHave int
 	cache			*cache.LRUCache
 	cacheCounter	*CacheCounter
+	lastSendingHave int
 }
 
 //func lessInt(a, b interface{}) bool { return a.(int) < b.(int) }
@@ -387,14 +387,43 @@ func (t *TorrentSession)SchedulerSuperSeeding() {
 		return
 	}
 
-	everage := 200 * 1024 * 1024 / t.m.Info.PieceLength / int64(len(t.peers))	//每隔10秒放出数据
+	sortPieces := llrb.New(pieceCntLess)
+	for k, v := range t.pieceStatics {
+		if k > t.lastSendingHave {
+			sortPieces.InsertNoReplace(&PieceCnt{pieceNo: k, count: v})
+		}
+	}
+
+	//some piece still not exist in network
+	for i := t.lastSendingHave; i < t.totalPieces; i++ {
+		if _, exist := t.pieceStatics[i]; !exist {
+			sortPieces.InsertNoReplace(&PieceCnt{pieceNo: i, count: 0})
+		}
+	}
+
+	everage := 200 * 1024 * 1024 / t.m.Info.PieceLength	//每隔10秒放出数据
+	done := false
 	for _, p := range t.peers {
+		if done {
+			break
+		}
+
 		have := 0
-		for i := t.lastSendingHave; have < int(everage) && i < t.totalPieces && t.lastSendingHave < t.totalPieces; i++ {
-			if !p.have.IsSet(i) {
+		
+		for ; have < int(everage);  {
+			min := sortPieces.DeleteMin() //rarest piece
+			if min == nil {
+				log.Println("no rarest piece found!!!!!!!!!!")
+				done = true
+				break 
+			}
+
+			pieceNo := min.(*PieceCnt).pieceNo
+
+			if !p.have.IsSet(pieceNo) {
 				haveMsg := make([]byte, 5)
 				haveMsg[0] = 4
-				uint32ToBytes(haveMsg[1:5], uint32(i))
+				uint32ToBytes(haveMsg[1:5], uint32(pieceNo))
 				p.sendMessage(haveMsg)
 				have++
 			}
@@ -403,10 +432,10 @@ func (t *TorrentSession)SchedulerSuperSeeding() {
 		}
 	}
 
-	log.Println("last send have piece no", t.lastSendingHave)
-	if t.lastSendingHave == t.totalPieces && t.tickCnt % 3 == 0 {
-		log.Printf("\n\n\tyeah! loop again\n\n")
-		t.lastSendingHave = 0
+	log.Println("last sending have", t.lastSendingHave)
+
+	if t.lastSendingHave == t.totalPieces {
+		log.Printf("\n\nyeah, loop again\n\n")
 	}
 
 	t.SchedulerChokeUnchoke();
@@ -902,7 +931,7 @@ func (t *TorrentSession) RecordBlock(p *peerState, piece, begin, length uint32) 
 			//log.Println("Have", t.goodPieces, "of", t.totalPieces, "pieces.")
 			if t.isSeeding() {
 				log.Printf("\n\n\ndownload finish\n")
-				log.Printf("everage speed %v M/s\n\n\n", t.totalSize / 1024 / 1024 / int64(time.Since(t.startTime).Seconds()))
+				log.Printf("everage speed %v M/s\n\n\n", float64(t.totalSize) / 1024 / 1024 / time.Since(t.startTime).Seconds())
 				t.fetchTrackerInfo("completed")
 				// TODO: Drop connections to all seeders.
 				for k, v := range t.history {
@@ -914,16 +943,17 @@ func (t *TorrentSession) RecordBlock(p *peerState, piece, begin, length uint32) 
 
 			for _, p := range t.peers {
 				if p.have != nil {
-					if p.have.IsSet(int(piece)) {
+					//commit for support super seeding
+					//if p.have.IsSet(int(piece)) {
 						// We don't do anything special. We rely on the caller
 						// to decide if this peer is still interesting.
-					} else {
-						//log.Println("...telling ", p)
+					//} else {
+						//log.Printf("...telling %v, piece %v\n", p, piece)
 						haveMsg := make([]byte, 5)
 						haveMsg[0] = 4
 						uint32ToBytes(haveMsg[1:5], uint32(piece))
 						p.sendMessage(haveMsg)
-					}
+					//}
 				}
 			}
 		}
@@ -1094,7 +1124,7 @@ func (t *TorrentSession) DoMessage(p *peerState, message []byte) (err error) {
 
 			n := bytesToUint32(message[1:])
 
-			//			log.Println("have", n, "from", p.address)
+			//log.Println("have", n, "from", p.address)
 			if n < uint32(p.have.n) {
 				p.have.Set(int(n))
 

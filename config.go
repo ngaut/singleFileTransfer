@@ -45,7 +45,7 @@ func init() {
 	rand.Seed(int64(time.Now().Nanosecond()))
 	flag.BoolVar(&cfg.doRealReadWrite, "doRealReadWrite", true, "do not io disk, using memory instead")
 	flag.IntVar(&cfg.STANDARD_BLOCK_LENGTH, "STANDARD_BLOCK_LENGTH", STORAGE_BLOCK_SIZE+BLOCK_META_SIZE, "stand block length")
-	flag.IntVar(&cfg.MAX_OUR_REQUESTS, "MAX_OUR_REQUESTS", 5, "max our requests")
+	flag.IntVar(&cfg.MAX_OUR_REQUESTS, "MAX_OUR_REQUESTS", 8, "max our requests")
 	flag.IntVar(&cfg.MAX_UPLOADING_CONNECTION, "MAX_UPLOADING_CONNECTION", 3, "max uploading connection")
 	flag.IntVar(&cfg.MAX_DOWNLOADING_CONNECTION, "MAX_DOWNLOADING_CONNECTION", 3, "max downloading connection")
 	flag.IntVar(&cfg.rechokeTick, "rechokeTick", 10, "rechoke tick seconds")
