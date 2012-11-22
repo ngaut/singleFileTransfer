@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"time"
+	"github.com/petar/GoLLRB/llrb"
 )
 
 const (
@@ -34,13 +35,45 @@ type ReadContext struct {
 	realLength   int
 }
 
+func ioLessFun(a, b interface{}) bool {
+	return a.(*IoArgs).offset < b.(*IoArgs).offset
+}
+
 func IoRoutine(request <-chan *IoArgs, responce chan<- interface{}) {
 	log.Println("start IoRoutine")
 
+	sortPieces := llrb.New(ioLessFun)
+
 	for arg := range request {
 		//todo: sort by offset and batch process io
-		HandleIo(arg)
-		responce <- arg.context
+		cnt := len(request)
+
+		//batch get request, then sort by offset
+		sortPieces.InsertNoReplace(arg)
+		for i := 0; i < cnt; i++ {
+			a := <-request
+			sortPieces.InsertNoReplace(a)
+			if a.ioMode == MODE_WRITE {
+				break
+			}
+		}
+
+		//batch process
+		if cnt > 50 {
+			log.Println("io is busy, batch io count", cnt)
+		}
+		
+		for  {
+			min := sortPieces.DeleteMin()
+			if min == nil {
+				break
+			}
+
+			//log.Println("io offset", min.(*IoArgs).offset)
+
+			HandleIo(min.(*IoArgs))
+			responce <- min.(*IoArgs).context
+		}
 	}
 	
 	log.Println("exit IoRoutine")
@@ -99,7 +132,7 @@ func HandleIo(arg *IoArgs) {
 		if arg.ioMode == MODE_WRITE {
 			mod = "WRITE"
 		}
-		log.Printf("\nwarning, disk io too slow, use %v seconds, mod:%v, offset:%v\n", sec, mod, arg.offset)
+		log.Printf("warning, disk io too slow, use %v seconds, mod:%v, offset:%v\n", sec, mod, arg.offset)
 	}			
 }			
 
