@@ -22,7 +22,7 @@ type Config struct {
 	rechokeTick                int
 	totalTransferSize          int64
 	changeProtocolName         bool
-	superSeeding			   bool
+	superSeeding               bool
 }
 
 var cfg Config

@@ -66,22 +66,22 @@ func min(a, b int) int {
 		return a
 	}
 
-	return b	
+	return b
 }
 
-type CacheCounter struct{
+type CacheCounter struct {
 	hint int64
 	miss int64
 }
 
-func (c* CacheCounter) IncHint() {
+func (c *CacheCounter) IncHint() {
 	c.hint++
 }
 
-func (c* CacheCounter) IncMiss() {
+func (c *CacheCounter) IncMiss() {
 	c.miss++
 }
 
-func (c* CacheCounter) HintRate() float64 {
-	return float64(c.hint) / float64(c.hint + c.miss)
+func (c *CacheCounter) HintRate() float64 {
+	return float64(c.hint) / float64(c.hint+c.miss)
 }

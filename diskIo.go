@@ -1,9 +1,9 @@
 package main
 
 import (
+	"github.com/petar/GoLLRB/llrb"
 	"log"
 	"time"
-	"github.com/petar/GoLLRB/llrb"
 )
 
 const (
@@ -62,8 +62,8 @@ func IoRoutine(request <-chan *IoArgs, responce chan<- interface{}) {
 		if cnt > 50 {
 			log.Println("io is busy, batch io count", cnt)
 		}
-		
-		for  {
+
+		for {
 			min := sortPieces.DeleteMin()
 			if min == nil {
 				break
@@ -75,7 +75,7 @@ func IoRoutine(request <-chan *IoArgs, responce chan<- interface{}) {
 			responce <- min.(*IoArgs).context
 		}
 	}
-	
+
 	log.Println("exit IoRoutine")
 }
 
@@ -133,6 +133,5 @@ func HandleIo(arg *IoArgs) {
 			mod = "WRITE"
 		}
 		log.Printf("warning, disk io too slow, use %v seconds, mod:%v, offset:%v\n", sec, mod, arg.offset)
-	}			
-}			
-
+	}
+}
